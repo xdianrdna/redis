@@ -62,6 +62,7 @@ static unsigned int dict_force_resize_ratio = 5;
 /* -------------------------- types ----------------------------------------- */
 struct dictEntry {
     void *key;
+    /* 以下内联结构，表示只有其中一个会生效 */
     union {
         void *val;
         uint64_t u64;
@@ -139,6 +140,8 @@ static inline int entryIsNoValue(const dictEntry *de) {
     return ((uintptr_t)(void *)de & ENTRY_PTR_MASK) == ENTRY_PTR_NO_VALUE;
 }
 
+/* 以上三个函数是判断节点是何种类型的 */
+
 /* Creates an entry without a value field. */
 static inline dictEntry *createEntryNoValue(void *key, dictEntry *next) {
     dictEntryNoValue *entry = zmalloc(sizeof(*entry));
@@ -147,18 +150,20 @@ static inline dictEntry *createEntryNoValue(void *key, dictEntry *next) {
     return (dictEntry *)(void *)((uintptr_t)(void *)entry | ENTRY_PTR_NO_VALUE);
 }
 
+// 后面看看
 static inline dictEntry *encodeMaskedPtr(const void *ptr, unsigned int bits) {
     assert(((uintptr_t)ptr & ENTRY_PTR_MASK) == 0);
     return (dictEntry *)(void *)((uintptr_t)ptr | bits);
 }
 
+// 后面看看
 static inline void *decodeMaskedPtr(const dictEntry *de) {
     assert(!entryIsKey(de));
     return (void *)((uintptr_t)(void *)de & ~ENTRY_PTR_MASK);
 }
 
-/* Decodes the pointer to an entry without value, when you know it is an entry
- * without value. Hint: Use entryIsNoValue to check. */
+/* 在确认节点为无值节点时，可以使用该方法来解码节点。 */
+/* 提示：使用 entryIsNoValue 来判断节点是否为无值节点 */
 static inline dictEntryNoValue *decodeEntryNoValue(const dictEntry *de) {
     return decodeMaskedPtr(de);
 }
@@ -223,14 +228,17 @@ int dictResize(dict *d)
 /* Expand or create the hash table,
  * when malloc_failed is non-NULL, it'll avoid panic if malloc fails (in which case it'll be set to 1).
  * Returns DICT_OK if expand was performed, and DICT_ERR if skipped. */
+/* XQ: 用于新建或对哈希表进行扩容 */
+/* 扩容时，看起来只是新建了 ht[1]，把 exp 写了进去
+ * TODO: 看看第三参数是干啥的
+ */
 int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
 {
+    /* XQ: malloc 是错误标志 */
     if (malloc_failed) *malloc_failed = 0;
 
-    /* the size is invalid if it is smaller than the number of
-     * elements already inside the hash table */
-    if (dictIsRehashing(d) || d->ht_used[0] > size)
-        return DICT_ERR;
+    /* XQ: 在重哈希或是 size 小于已有元素数量时，返回 DICT_ERR */
+    if (dictIsRehashing(d) || d->ht_used[0] > size) return DICT_ERR;
 
     /* the new hash table */
     dictEntry **new_ht_table;
@@ -297,6 +305,7 @@ int dictTryExpand(dict *d, unsigned long size) {
  * guaranteed that this function will rehash even a single bucket, since it
  * will visit at max N*10 empty buckets in total, otherwise the amount of
  * work it does would be unbound and the function may block for a long time. */
+/* 如果重哈希未结束，返回 1，返回 0 则表示重哈希结束了 */
 int dictRehash(dict *d, int n) {
     int empty_visits = n*10; /* Max number of empty buckets to visit. */
     unsigned long s0 = DICTHT_SIZE(d->ht_size_exp[0]);
@@ -322,7 +331,7 @@ int dictRehash(dict *d, int n) {
         de = d->ht_table[0][d->rehashidx];
         /* Move all the keys in this bucket from the old to the new hash HT */
         while(de) {
-            uint64_t h;
+            uint64_t h;  /* 新的哈希槽 */
 
             nextde = dictGetNext(de);
             void *key = dictGetKey(de);
@@ -334,7 +343,7 @@ int dictRehash(dict *d, int n) {
                  * two, so we simply mask the bucket index in the larger table
                  * to get the bucket index in the smaller table. */
                 h = d->rehashidx & DICTHT_SIZE_MASK(d->ht_size_exp[1]);
-            }
+            /*  */}
             if (d->type->no_value) {
                 if (d->type->keys_are_odd && !d->ht_table[1][h]) {
                     /* Destination bucket is empty and we can store the key
@@ -541,6 +550,8 @@ int dictReplace(dict *d, void *key, void *val)
  * existing key is returned.)
  *
  * See dictAddRaw() for more information. */
+/* 用于新增或查找。
+ * 如果有名为 key 的节点就返回，如果没有就新增然后返回 */
 dictEntry *dictAddOrFind(dict *d, void *key) {
     dictEntry *entry, *existing;
     entry = dictAddRaw(d,key,&existing);
@@ -709,6 +720,7 @@ void *dictFetchValue(dict *d, const void *key) {
  * dictFind followed by dictDelete. i.e. the first API is a find, and it gives some info
  * to the second one to avoid repeating the lookup
  */
+/* TODO: 这两个两步处理的方法，后面再看看吧 */
 dictEntry *dictTwoPhaseUnlinkFind(dict *d, const void *key, dictEntry ***plink, int *table_index) {
     uint64_t h, idx, table;
 
@@ -846,6 +858,7 @@ static void dictSetNext(dictEntry *de, dictEntry *next) {
     }
 }
 
+// TODO: 看到这里了
 /* Returns the memory usage in bytes of the dict, excluding the size of the keys
  * and values. */
 size_t dictMemUsage(const dict *d) {
@@ -1429,6 +1442,9 @@ static signed char _dictNextExp(unsigned long size)
     if (size <= DICT_HT_INITIAL_SIZE) return DICT_HT_INITIAL_EXP;
     if (size >= LONG_MAX) return (8*sizeof(long)-1);
 
+    /* XQ: __builtin_clzl 返回 32 位表示的前导 0 的个数 */
+    /* 如 size = 128, 则 128 - 1 (0x0000007f) 前导 0 为 25 个 */
+    /* 此时 32 - 7 = 25, 则 1 << 7 可以容纳 128 个节点 */
     return 8*sizeof(long) - __builtin_clzl(size-1);
 }
 

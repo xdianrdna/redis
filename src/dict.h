@@ -83,11 +83,11 @@ struct dict {
     dictEntry **ht_table[2];
     unsigned long ht_used[2];
 
-    long rehashidx; /* rehashing not in progress if rehashidx == -1 */
+    long rehashidx; /* XQ: 重哈希进度，rehashidx == -1 时表示不在进行重哈希 */
 
     /* Keep small vars at end for optimal (minimal) struct padding */
     int16_t pauserehash; /* If >0 rehashing is paused (<0 indicates coding error) */
-    signed char ht_size_exp[2]; /* exponent of size. (size = 1<<exp) */
+    signed char ht_size_exp[2]; /* XQ: 是字典大小的指数 (size = 1<<exp) */
 };
 
 /* If safe is set to 1 this is a safe iterator, that means, you can call
